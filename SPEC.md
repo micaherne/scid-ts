@@ -160,15 +160,6 @@ No header. Array of 56-byte records (14 × uint32, little-endian).
 | 9    | 31:0          | offset low (32 bits)     |
 | 10   | 31:24         | storedLineCode (8 bits)  |
 |      | 23:0          | finalMatSig (24 bits)    |
-| 11   | 31:16         | homePawnCount(8) ...     |
-|      | 15:10         | ratingTypes (6 bits)     |
-|      | 9:8           | result (2 bits)          |
-|      | 7(or 15):0    | ECO code (16 bits)       |
-
-Wait — let me restate word 11 more carefully:
-
-| Word | Bits  | Field                                              |
-|------|-------|----------------------------------------------------|
 | 11   | 31:24 | homePawnData[0] (count byte)                       |
 |      | 23:18 | whiteEloType(3) + blackEloType(3)                  |
 |      | 17:16 | result (2 bits)                                    |
