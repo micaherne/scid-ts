@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { Board } from "./board";
-import { decodeMoveOrMarker, DecodeResult, DecodeMarker } from "./decode";
-import { KING, QUEEN, ROOK, BISHOP, KNIGHT, PAWN, WHITE, BLACK } from "./types";
+import { Board } from "./board.js";
+import { decodeMoveOrMarker, DecodeResult, DecodeMarker } from "./decode.js";
+import { KING, QUEEN, ROOK, BISHOP, KNIGHT, PAWN, WHITE, BLACK } from "./types.js";
 
 function decodeMove(board: Board, byte: number, extraBytes: number[] = []): DecodeResult {
 	let idx = 0;

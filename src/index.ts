@@ -1,14 +1,15 @@
 import * as fs from "fs";
-import { codec4 } from "./codec4";
-import { codec5 } from "./codec5";
-import { parseGameData } from "./game";
+import { codec4 } from "./codec4.js";
+import { codec5 } from "./codec5.js";
+import { parseGameData, parseAnnotatedGameData } from "./game.js";
 import {
 	ScidCodec, IndexEntry, ScidGameHeaders, ScidMove, ScidGame,
+	ScidAnnotatedMove, ScidAnnotatedGame,
 	NAME_PLAYER, NAME_EVENT, NAME_SITE, NAME_ROUND,
 	decodeDate, decodeEco, resultToString,
-} from "./types";
+} from "./types.js";
 
-export type { ScidGameHeaders, ScidMove, ScidGame } from "./types";
+export type { ScidGameHeaders, ScidMove, ScidGame, ScidAnnotatedMove, ScidAnnotatedGame } from "./types.js";
 
 export class ScidDatabase {
 	private codec: ScidCodec | null = null;
@@ -100,6 +101,28 @@ export class ScidDatabase {
 			headers: this.getHeaders(n),
 			moves: this.getMoves(n),
 		};
+	}
+
+	getAnnotatedGame(n: number): ScidAnnotatedGame {
+		const e = this.entries[n];
+		const headers = this.getHeaders(n);
+		if (!e || e.gameLength === 0) return { headers, moves: [], extraTags: [] };
+
+		const fd = fs.openSync(this.gameFilePath, "r");
+		try {
+			const buf = Buffer.alloc(e.gameLength);
+			fs.readSync(fd, buf, 0, e.gameLength, e.gameOffset);
+			const parsed = parseAnnotatedGameData(buf, 0, e.gameLength);
+			return {
+				headers,
+				moves: parsed.moves,
+				extraTags: parsed.extraTags,
+				...(parsed.startFen !== null ? { startFen: parsed.startFen } : {}),
+				...(parsed.comment !== null ? { comment: parsed.comment } : {}),
+			};
+		} finally {
+			fs.closeSync(fd);
+		}
 	}
 
 	/**

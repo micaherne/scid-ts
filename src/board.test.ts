@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { Board } from "./board";
-import { KING, QUEEN, ROOK, BISHOP, KNIGHT, PAWN, WHITE, BLACK } from "./types";
+import { Board } from "./board.js";
+import { KING, QUEEN, ROOK, BISHOP, KNIGHT, PAWN, WHITE, BLACK } from "./types.js";
 
 describe("Board", () => {
 	describe("setupStartPosition", () => {

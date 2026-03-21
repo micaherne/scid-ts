@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import * as path from "path";
 import * as fs from "fs";
-import { ScidDatabase } from "./index";
+import { ScidDatabase } from "./index.js";
 
-const FIXTURES_DIR = path.join(__dirname, "fixtures");
+const FIXTURES_DIR = path.join(__dirname, "../fixtures");
 
 // ---------------------------------------------------------------------------
 // Fixture-based tests — always run, no external dependencies
@@ -105,6 +105,101 @@ describe("ScidDatabase integration (SCID4 fixtures)", () => {
 		db.open(path.join(FIXTURES_DIR, "test.si4"));
 		const moves = db.getMoves(0);
 		expect(moves).toEqual(FOOL_S_MATE_MOVES);
+		db.close();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Annotated game fixtures (SCID5 only)
+// Game: {Game comment} 1.f3?! {A bad move} e5  2.g4 ({Interesting try} 2.e4 {Better}) Qh4#
+// ---------------------------------------------------------------------------
+
+describe("ScidDatabase getAnnotatedGame (SCID5 annotated fixture)", () => {
+	it("returns main-line moves unchanged", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si5"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.moves.map(m => ({ from: m.from, to: m.to }))).toEqual(
+			FOOL_S_MATE_MOVES.map(m => ({ from: m.from, to: m.to }))
+		);
+		db.close();
+	});
+
+	it("attaches game-level pre-game comment", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si5"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.comment).toBe("Game comment");
+		db.close();
+	});
+
+	it("attaches NAG to the correct move", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si5"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.moves[0].nags).toEqual([6]); // ?! on 1.f3
+		expect(game.moves[1].nags).toBeUndefined();
+		db.close();
+	});
+
+	it("attaches commentAfter to the correct move", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si5"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.moves[0].commentAfter).toBe("A bad move"); // after 1.f3
+		expect(game.moves[1].commentAfter).toBeUndefined();
+		expect(game.moves[2].commentAfter).toBeUndefined();
+		expect(game.moves[3].commentAfter).toBeUndefined();
+		db.close();
+	});
+
+	it("returns the variation on the correct move", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si5"));
+		const game = db.getAnnotatedGame(0);
+		// Variation is on 2.g4 (index 2): alternative is 2.e4
+		expect(game.moves[0].variations).toBeUndefined();
+		expect(game.moves[1].variations).toBeUndefined();
+		expect(game.moves[2].variations).toHaveLength(1);
+		expect(game.moves[3].variations).toBeUndefined();
+		db.close();
+	});
+
+	it("decodes variation moves with commentBefore and commentAfter", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si5"));
+		const game = db.getAnnotatedGame(0);
+		const variation = game.moves[2].variations![0];
+		expect(variation).toHaveLength(1);
+		expect(variation[0].from).toBe("e2");
+		expect(variation[0].to).toBe("e4");
+		expect(variation[0].commentBefore).toBe("Interesting try");
+		expect(variation[0].commentAfter).toBe("Better");
+		db.close();
+	});
+
+	it("returns extraTags as empty array when no extra tags present", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si5"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.extraTags).toEqual([]);
+		db.close();
+	});
+
+	it("returns no startFen for standard starting position", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si5"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.startFen).toBeUndefined();
+		db.close();
+	});
+
+	it("headers are still correct", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si5"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.headers.white).toBe("White");
+		expect(game.headers.result).toBe("0-1");
 		db.close();
 	});
 });

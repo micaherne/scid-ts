@@ -4,7 +4,7 @@ A TypeScript library for reading [SCID](http://scid.sourceforge.net/) chess data
 
 ## Requirements
 
-Node.js 18 or later. The library uses `fs` and `Buffer` and is **Node.js only** — it does not work in browsers or Deno.
+Node.js 18 or later, or Bun. The library uses `fs` and `Buffer` — it does not work in browsers.
 
 ## Installation
 
@@ -43,6 +43,21 @@ const game = db.getGame(0);
 console.log(game.headers.eco);
 console.log(game.moves.length, "moves");
 
+// Read with comments, NAGs, and variations
+const annotated = db.getAnnotatedGame(0);
+if (annotated.comment) console.log(`{${annotated.comment}}`); // pre-game comment
+for (const move of annotated.moves) {
+  console.log(`${move.from}-${move.to}`);
+  if (move.commentBefore) console.log(`  before: {${move.commentBefore}}`);
+  if (move.commentAfter) console.log(`  after: {${move.commentAfter}}`);
+  if (move.nags) console.log(`  NAGs: ${move.nags.join(", ")}`);
+  if (move.variations) {
+    for (const variation of move.variations) {
+      console.log("  variation:", variation.map(m => `${m.from}-${m.to}`).join(" "));
+    }
+  }
+}
+
 // Search games by player, event, site, or ECO (case-insensitive substring)
 const results = db.search("Kasparov", 0, 20);
 console.log(`${results.total} matching games`);
@@ -80,16 +95,30 @@ interface ScidGame {
   headers: ScidGameHeaders;
   moves: ScidMove[];
 }
+
+interface ScidAnnotatedMove extends ScidMove {
+  commentBefore?: string;          // comment appearing before this move
+  commentAfter?: string;           // comment appearing after this move
+  nags?: number[];                 // numeric annotation glyphs (1=!, 2=?, 6=?!, etc.)
+  variations?: ScidAnnotatedMove[][];
+}
+
+interface ScidAnnotatedGame {
+  headers: ScidGameHeaders;
+  moves: ScidAnnotatedMove[];
+  comment?: string;                // pre-game comment (before move 1)
+  extraTags: [string, string][];   // non-standard PGN tags (Annotator, TimeControl, etc.)
+  startFen?: string;               // custom start position, absent if standard
+}
 ```
 
 ## Known limitations
 
 - **Read-only.** There is no write support. You cannot create or modify SCID databases.
-- **Node.js only.** Uses `fs.readFileSync`, `fs.openSync`, `fs.readSync`, and `Buffer`. No browser support.
-- **Variations are not returned.** `getMoves()` returns main-line moves only. Variation branches in annotated games are silently skipped.
-- **Comments are not decoded.** Comment markers are recognised in the move stream but the comment text is not parsed or returned.
+- **No browser support.** Uses `fs.readFileSync`, `fs.openSync`, `fs.readSync`, and `Buffer`. Works on Node.js 18+ and Bun.
+- **`getMoves()` returns main-line moves only.** Use `getAnnotatedGame()` to get variations and comments.
 - **`search()` is a linear scan.** It iterates every game entry and resolves names for each one. It works fine for small-to-medium databases; on a multi-million-game database (e.g. the Gigabase) it will be slow.
-- **`getMoves()` opens and closes the game file on every call.** Reading many games sequentially is less efficient than it could be.
+- **`getMoves()` and `getAnnotatedGame()` open and close the game file on every call.** Reading many games sequentially is less efficient than it could be.
 
 ## Binary format reference
 

@@ -58,6 +58,21 @@ export interface ScidGame {
 	moves: ScidMove[];
 }
 
+export interface ScidAnnotatedMove extends ScidMove {
+	commentBefore?: string;          // comment appearing before this move in the game stream
+	commentAfter?: string;           // comment appearing after this move
+	nags?: number[];                 // numeric annotation glyphs (1=!, 2=??, 6=?!, etc.)
+	variations?: ScidAnnotatedMove[][];
+}
+
+export interface ScidAnnotatedGame {
+	headers: ScidGameHeaders;
+	moves: ScidAnnotatedMove[];
+	comment?: string;                // pre-game comment (before move 1)
+	extraTags: [string, string][];   // non-standard PGN tags (Annotator, TimeControl, etc.)
+	startFen?: string;               // custom start position, absent if standard
+}
+
 // Internal types for codec strategy
 export interface IndexEntry {
 	whiteId: number;
@@ -121,7 +136,7 @@ export function decodeEco(eco: number): string {
 	const digits = Math.floor((eco >> 2) % 100);
 	const letter = Math.floor(eco / 400);
 	if (letter > 4) return "";
-	const base = String.fromCharCode(65 + letter) + String(digits).padStart(2, "0");
+	const base = String.fromCharCode(65 + letter) + String(digits).padStart(2, "00");
 	if (subcode === 0) return base;
 	return base + String.fromCharCode(96 + subcode); // a, b, c
 }

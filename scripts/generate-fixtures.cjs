@@ -2,10 +2,14 @@
 /**
  * Generates minimal valid SCID4 and SCID5 fixture databases for integration tests.
  *
- * Encodes a single game: Fool's Mate
+ * Game 1 (test.*): Fool's Mate — no annotations
  *   1. f3 e5  2. g4 Qh4#  (result: 0-1)
  *
- * Run with: node scripts/generate-fixtures.js
+ * Game 2 (annotated.*): Fool's Mate with all annotation types (SCID5 only)
+ *   {Game comment} 1. f3?! {A bad move} e5  2. g4 ({Interesting try} 2. e4 {Better}) Qh4#
+ *   Tests: game-level comment, NAG, commentAfter, commentBefore in variation, commentAfter in variation
+ *
+ * Run with: node scripts/generate-fixtures.cjs
  */
 
 "use strict";
@@ -17,7 +21,7 @@ const FIXTURES_DIR = path.join(__dirname, "..", "fixtures");
 fs.mkdirSync(FIXTURES_DIR, { recursive: true });
 
 // ---------------------------------------------------------------------------
-// Game move stream (identical format for .sg4 and .sg5)
+// Move stream encoding helpers
 // ---------------------------------------------------------------------------
 // Standard start position piece list indices (white):
 //   0=K@e1, 1=R@a1, 2=N@b1, 3=B@c1, 4=Q@d1, 5=B@f1, 6=N@g1, 7=R@h1,
@@ -36,6 +40,16 @@ fs.mkdirSync(FIXTURES_DIR, { recursive: true });
 //           dest h4 = rank3*8+file7 = 31, second byte = 31+64 = 95 = 0x5F
 //           byte = (4<<4)|3 = 0x43, extra byte = 0x5F
 // End game: 0x0F
+//
+// For the variation 2. e4: board is reset to before 2.g4 (after 1.f3 e5),
+//   white to move, Pe2 still at list index 12, double push code 15 → 0xCF
+
+// date encoding: (year << 9) | (month << 5) | day
+const DATE = (2024 << 9) | (1 << 5) | 1; // 2024.01.01
+
+// ---------------------------------------------------------------------------
+// Game 1: Fool's Mate, no annotations
+// ---------------------------------------------------------------------------
 
 const GAME_DATA = Buffer.from([
 	0x00, // end of extra tags
@@ -48,13 +62,59 @@ const GAME_DATA = Buffer.from([
 	0x0F, // end game
 ]);
 
-const GAME_LENGTH = GAME_DATA.length; // 8
+// ---------------------------------------------------------------------------
+// Game 2: Fool's Mate with all annotation types (SCID5 only)
+//   {Game comment} 1. f3?! {A bad move} e5  2. g4 ({Interesting try} 2. e4 {Better}) Qh4#
+// ---------------------------------------------------------------------------
+// Comment encoding: ENCODE_COMMENT markers (0x0C) appear in the move stream
+// at the point where the comment belongs. The actual strings are stored as
+// null-terminated sequences after the END_GAME (0x0F) byte, in stream order.
+//
+// NAG encoding: ENCODE_NAG (0x0B) followed by the NAG value byte.
+//   NAG 6 = "?!" (dubious move)
+//
+// Move stream:
+//   0x0C               — ENCODE_COMMENT (comment 1: "Game comment", pre-game)
+//   0xD1               — 1. f3
+//   0x0B, 0x06         — ENCODE_NAG, value=6 (?!)
+//   0x0C               — ENCODE_COMMENT (comment 2: "A bad move", after f3)
+//   0xCF               — 1... e5
+//   0xEF               — 2. g4
+//   0x0D               — START_VARIATION
+//   0x0C               — ENCODE_COMMENT (comment 3: "Interesting try", before 2.e4)
+//   0xCF               — 2. e4 (Pe2, list idx 12, double push; board before 2.g4)
+//   0x0C               — ENCODE_COMMENT (comment 4: "Better", after e4)
+//   0x0E               — END_VARIATION
+//   0x43, 0x5F         — 2... Qh4
+//   0x0F               — END_GAME
+// Then null-terminated comment strings in stream order.
 
-// date encoding: (year << 9) | (month << 5) | day
-const DATE = (2024 << 9) | (1 << 5) | 1; // 2024.01.01 = 1036321
+const ANNOTATED_GAME_DATA = Buffer.concat([
+	Buffer.from([
+		0x00,       // end of extra tags
+		0x00,       // standard start position
+		0x0C,       // ENCODE_COMMENT (pre-game: "Game comment")
+		0xD1,       // 1. f3
+		0x0B, 0x06, // ENCODE_NAG, value=6 (?!)
+		0x0C,       // ENCODE_COMMENT (after f3: "A bad move")
+		0xCF,       // 1... e5
+		0xEF,       // 2. g4
+		0x0D,       // START_VARIATION
+		0x0C,       // ENCODE_COMMENT (before 2.e4: "Interesting try")
+		0xCF,       // 2. e4
+		0x0C,       // ENCODE_COMMENT (after e4: "Better")
+		0x0E,       // END_VARIATION
+		0x43, 0x5F, // 2... Qh4
+		0x0F,       // END_GAME
+	]),
+	Buffer.from("Game comment\0", "utf8"),
+	Buffer.from("A bad move\0", "utf8"),
+	Buffer.from("Interesting try\0", "utf8"),
+	Buffer.from("Better\0", "utf8"),
+]);
 
 // ---------------------------------------------------------------------------
-// SCID5
+// SCID5 namebase (shared between both fixtures — same players/event/site)
 // ---------------------------------------------------------------------------
 
 function makeSn5() {
@@ -84,43 +144,34 @@ function makeSn5() {
 	return Buffer.concat(parts);
 }
 
-function makeSi5() {
+function makeSi5(gameData, offset) {
 	// 56 bytes: 14 × uint32 LE
-	// w0:  nComments(4) | whiteID(28)   → whiteID=0
-	// w1:  nVariations(4) | blackID(28) → blackID=1
-	// w2:  nNags(4) | eventID(28)       → eventID=0
-	// w3:  siteID(32)                   → 0
-	// w4:  chess960(1) | roundID(31)    → roundID=0
-	// w5:  whiteElo(12) | date(20)      → date=DATE
-	// w6:  blackElo(12) | eventDate(20) → 0
-	// w7:  numHalfMoves(10) | flags(22) → 4 half-moves
-	// w8:  gameDataSize(17) | offsetHigh(15) → size=GAME_LENGTH, high=0
-	// w9:  offsetLow(32)                → 0
-	// w10: storedLineCode(8) | finalMatSig(24) → 0
-	// w11: homePawnCount(8) | ratingTypes(6) | result(2) | ECO(16)
-	//      result=2 (RESULT_BLACK=0-1) at bits 17:16
-	// w12-13: 0
 	const buf = Buffer.alloc(56);
-	buf.writeUInt32LE(0, 0);                          // w0: whiteID=0
-	buf.writeUInt32LE(1, 4);                          // w1: blackID=1
-	buf.writeUInt32LE(0, 8);                          // w2: eventID=0
-	buf.writeUInt32LE(0, 12);                         // w3: siteID=0
-	buf.writeUInt32LE(0, 16);                         // w4: roundID=0
-	buf.writeUInt32LE(DATE, 20);                      // w5: date
-	buf.writeUInt32LE(0, 24);                         // w6
-	buf.writeUInt32LE(4 * (1 << 22), 28);             // w7: 4 half-moves
-	buf.writeUInt32LE((GAME_LENGTH << 15) >>> 0, 32); // w8: gameDataSize
-	buf.writeUInt32LE(0, 36);                         // w9: offsetLow=0
-	buf.writeUInt32LE(0, 40);                         // w10
-	buf.writeUInt32LE(2 << 16, 44);                   // w11: result=2 (black wins)
-	buf.writeUInt32LE(0, 48);                         // w12
-	buf.writeUInt32LE(0, 52);                         // w13
+	buf.writeUInt32LE(0, 0);                                // w0: whiteID=0
+	buf.writeUInt32LE(1, 4);                                // w1: blackID=1
+	buf.writeUInt32LE(0, 8);                                // w2: eventID=0
+	buf.writeUInt32LE(0, 12);                               // w3: siteID=0
+	buf.writeUInt32LE(0, 16);                               // w4: roundID=0
+	buf.writeUInt32LE(DATE, 20);                            // w5: date
+	buf.writeUInt32LE(0, 24);                               // w6
+	buf.writeUInt32LE(4 * (1 << 22), 28);                   // w7: 4 half-moves
+	buf.writeUInt32LE((gameData.length << 15) >>> 0, 32);   // w8: gameDataSize
+	buf.writeUInt32LE(offset >>> 0, 36);                    // w9: offsetLow
+	buf.writeUInt32LE(0, 40);                               // w10
+	buf.writeUInt32LE(2 << 16, 44);                         // w11: result=2 (black wins)
+	buf.writeUInt32LE(0, 48);                               // w12
+	buf.writeUInt32LE(0, 52);                               // w13
 	return buf;
 }
 
-fs.writeFileSync(path.join(FIXTURES_DIR, "test.si5"), makeSi5());
-fs.writeFileSync(path.join(FIXTURES_DIR, "test.sn5"), makeSn5());
+const sn5 = makeSn5();
+fs.writeFileSync(path.join(FIXTURES_DIR, "test.si5"), makeSi5(GAME_DATA, 0));
+fs.writeFileSync(path.join(FIXTURES_DIR, "test.sn5"), sn5);
 fs.writeFileSync(path.join(FIXTURES_DIR, "test.sg5"), GAME_DATA);
+
+fs.writeFileSync(path.join(FIXTURES_DIR, "annotated.si5"), makeSi5(ANNOTATED_GAME_DATA, 0));
+fs.writeFileSync(path.join(FIXTURES_DIR, "annotated.sn5"), sn5);
+fs.writeFileSync(path.join(FIXTURES_DIR, "annotated.sg5"), ANNOTATED_GAME_DATA);
 
 // ---------------------------------------------------------------------------
 // SCID4
@@ -164,7 +215,7 @@ function makeSn4() {
 	]);
 }
 
-function makeSi4() {
+function makeSi4(gameData) {
 	// Header: 182 bytes
 	//   [13-15]: numGames = 1
 	const header = Buffer.alloc(182);
@@ -177,7 +228,7 @@ function makeSi4() {
 	record.writeUInt32BE(0, 0);
 
 	// Bytes 4-6: gameLength(17 bits) packed as (b4<<9)|(b5<<1)|(b6>>7)
-	const gl = GAME_LENGTH;
+	const gl = gameData.length;
 	record[4] = (gl >> 9) & 0xff;
 	record[5] = (gl >> 1) & 0xff;
 	record[6] = (gl & 1) << 7;
@@ -197,11 +248,11 @@ function makeSi4() {
 	return Buffer.concat([header, record]);
 }
 
-fs.writeFileSync(path.join(FIXTURES_DIR, "test.si4"), makeSi4());
+fs.writeFileSync(path.join(FIXTURES_DIR, "test.si4"), makeSi4(GAME_DATA));
 fs.writeFileSync(path.join(FIXTURES_DIR, "test.sn4"), makeSn4());
 fs.writeFileSync(path.join(FIXTURES_DIR, "test.sg4"), GAME_DATA);
 
 console.log("Fixtures written to", FIXTURES_DIR);
-console.log("  test.si4/sn4/sg4 — SCID4 format");
-console.log("  test.si5/sn5/sg5 — SCID5 format");
-console.log("Game: Fool's Mate (1.f3 e5 2.g4 Qh4#), result 0-1, date 2024.01.01");
+console.log("  test.si4/sn4/sg4         — SCID4, Fool's Mate, no annotations");
+console.log("  test.si5/sn5/sg5         — SCID5, Fool's Mate, no annotations");
+console.log("  annotated.si5/sn5/sg5    — SCID5, Fool's Mate with comment and variation");

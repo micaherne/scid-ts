@@ -2,7 +2,7 @@ import {
 	KING, QUEEN, ROOK, BISHOP, KNIGHT, PAWN, EMPTY,
 	WHITE, BLACK, Color, PieceType,
 	squareFile, squareRank
-} from "./types";
+} from "./types.js";
 
 interface Piece {
 	type: PieceType;

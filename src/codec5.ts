@@ -1,4 +1,4 @@
-import { IndexEntry, ScidCodec, NAME_PLAYER, NAME_EVENT, NAME_SITE, NAME_ROUND } from "./types";
+import { IndexEntry, ScidCodec, NAME_PLAYER, NAME_EVENT, NAME_SITE, NAME_ROUND } from "./types.js";
 
 const RECORD_SIZE = 56; // 14 × uint32 = 56 bytes
 

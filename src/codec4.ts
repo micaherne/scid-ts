@@ -1,4 +1,4 @@
-import { IndexEntry, ScidCodec, NAME_PLAYER, NAME_EVENT, NAME_SITE, NAME_ROUND } from "./types";
+import { IndexEntry, ScidCodec, NAME_PLAYER, NAME_EVENT, NAME_SITE, NAME_ROUND } from "./types.js";
 
 const HEADER_SIZE = 182;
 const RECORD_SIZE = 47;

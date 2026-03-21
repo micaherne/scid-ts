@@ -1,4 +1,4 @@
-import { Board } from "./board";
+import { Board } from "./board.js";
 import {
 	KING, QUEEN, ROOK, BISHOP, KNIGHT, PAWN,
 	WHITE, BLACK, Color, PieceType,
@@ -6,7 +6,7 @@ import {
 	ENCODE_NAG, ENCODE_COMMENT, ENCODE_START_MARKER,
 	ENCODE_END_MARKER, ENCODE_END_GAME,
 	ScidMove
-} from "./types";
+} from "./types.js";
 
 export interface DecodeResult {
 	type: "move";
