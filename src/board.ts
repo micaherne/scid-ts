@@ -69,6 +69,13 @@ export class Board {
 		return this.pieces[idx];
 	}
 
+	/** Return the list index (0-15) of the piece at sq for the given color, or -1. */
+	getListIndex(color: Color, sq: number): number {
+		const absIdx = this.board[sq];
+		if (absIdx < 0) return -1;
+		return this.list[color].indexOf(absIdx);
+	}
+
 	/**
 	 * Set up the standard starting position with SCID's hardcoded piece ordering.
 	 * Matches getStdStart() in position.cpp.

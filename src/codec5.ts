@@ -1,4 +1,4 @@
-import { IndexEntry, ScidCodec, FLAG_DELETE } from "./types.js";
+import { IndexEntry, ScidCodec, FLAG_DELETE, encodeAnnotationCount } from "./types.js";
 
 const RECORD_SIZE = 56; // 14 × uint32 LE + 8 bytes homePawnData
 
@@ -122,4 +122,60 @@ export const codec5: ScidCodec = {
 	gameFileExt(): string {
 		return ".sg5";
 	},
+
+	encodeIndexEntry(e: IndexEntry): Buffer {
+		const buf = Buffer.alloc(56, 0);
+
+		function writeU32LE(off: number, val: number) { buf.writeUInt32LE(val >>> 0, off); }
+		function pack(a: number, aSz: number, b: number): number {
+			return (((a << (32 - aSz)) >>> 0) | (b >>> 0)) >>> 0;
+		}
+
+		writeU32LE(0,  pack(encodeAnnotationCount(e.nComments),   4, e.whiteId));
+		writeU32LE(4,  pack(encodeAnnotationCount(e.nVariations),  4, e.blackId));
+		writeU32LE(8,  pack(encodeAnnotationCount(e.nNags),        4, e.eventId));
+		writeU32LE(12, e.siteId >>> 0);
+		writeU32LE(16, pack(e.chess960 ? 1 : 0,                   1, e.roundId));
+		writeU32LE(20, pack(e.whiteElo,                           12, e.date));
+		writeU32LE(24, pack(e.blackElo,                           12, e.eventDate));
+		writeU32LE(28, pack(e.numHalfMoves,                       10, e.flags & 0x3FFFFF));
+
+		const offsetHigh = Math.floor(e.gameOffset / 0x100000000) & 0x7FFF;
+		writeU32LE(32, pack(e.gameLength,                         17, offsetHigh));
+		writeU32LE(36, e.gameOffset >>> 0);
+
+		writeU32LE(40, pack(e.storedLineCode,                      8, e.finalMatSig));
+
+		const rtypes = ((e.whiteEloType & 0x7) << 5) | ((e.blackEloType & 0x7) << 2) | (e.result & 0x3);
+		writeU32LE(44, pack((e.homePawnData[0] << 8) | rtypes,   16, e.eco));
+
+		for (let i = 0; i < 8; i++) buf[48 + i] = e.homePawnData[i + 1] ?? 0;
+
+		return buf;
+	},
+
+	writeIndex(entries: IndexEntry[]): Buffer {
+		return Buffer.concat(entries.map(e => this.encodeIndexEntry(e)));
+	},
+
+	writeNamebase(names: string[][]): Buffer {
+		// SCID5 namebase: LEB128((strLen << 3) | nameType) + utf8 string
+		const parts: Buffer[] = [];
+		for (let type = 0; type < 4; type++) {
+			for (const name of (names[type] ?? [])) {
+				let v = (name.length << 3) | type;
+				const leb: number[] = [];
+				do {
+					let b = v & 0x7F;
+					v >>>= 7;
+					if (v !== 0) b |= 0x80;
+					leb.push(b);
+				} while (v !== 0);
+				parts.push(Buffer.from(leb));
+				parts.push(Buffer.from(name, "utf8"));
+			}
+		}
+		return Buffer.concat(parts);
+	},
 };
+

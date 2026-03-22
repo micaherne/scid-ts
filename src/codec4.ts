@@ -1,4 +1,4 @@
-import { IndexEntry, ScidCodec, FLAG_DELETE } from "./types.js";
+import { IndexEntry, ScidCodec, FLAG_DELETE, encodeAnnotationCount } from "./types.js";
 
 const HEADER_SIZE = 182;
 const RECORD_SIZE = 47;
@@ -17,6 +17,21 @@ function decodeCompactEventDate(compact: number, date: number): number {
 	const dyear    = date >> 9;
 	const eyear    = dyear + eyearRel - 4;
 	return (eyear << 9) | (month << 5) | day;
+}
+
+/**
+ * Encode an absolute eventDate into the 12-bit compact form relative to date.
+ * Returns 0 if unknown or too far away.
+ */
+function encodeCompactEventDate4(eventDate: number, date: number): number {
+	if (!eventDate) return 0;
+	const eyear = eventDate >> 9;
+	const dyear  = date >> 9;
+	if (eyear < dyear - 3 || eyear > dyear + 3) return 0;
+	const eyearRel = (eyear - dyear + 4) & 7;
+	const month = (eventDate >> 5) & 0xF;
+	const day   = eventDate & 0x1F;
+	return (eyearRel << 9) | (month << 5) | day;
 }
 
 /**
@@ -199,5 +214,116 @@ export const codec4: ScidCodec = {
 
 	gameFileExt(): string {
 		return ".sg4";
+	},
+
+	encodeIndexEntry(e: IndexEntry): Buffer {
+		const buf = Buffer.alloc(47, 0);
+
+		function writeU16BE(off: number, v: number) {
+			buf[off] = (v >> 8) & 0xFF; buf[off + 1] = v & 0xFF;
+		}
+		function writeU32BE(off: number, v: number) {
+			buf[off] = (v >>> 24) & 0xFF; buf[off + 1] = (v >>> 16) & 0xFF;
+			buf[off + 2] = (v >>> 8) & 0xFF; buf[off + 3] = v & 0xFF;
+		}
+
+		writeU32BE(0, e.gameOffset >>> 0);
+
+		const gl = e.gameLength;
+		writeU16BE(4, gl & 0xFFFF);
+		buf[6] = ((gl >= 0x10000) ? 0x80 : 0x00) | ((e.flags >>> 16) & 0x3F);
+		writeU16BE(7, e.flags & 0xFFFF);
+
+		buf[9] = (((e.whiteId >>> 16) & 0xF) << 4) | ((e.blackId >>> 16) & 0xF);
+		writeU16BE(10, e.whiteId & 0xFFFF);
+		writeU16BE(12, e.blackId & 0xFFFF);
+
+		buf[14] = (((e.eventId >>> 16) & 0x7) << 5) | (((e.siteId >>> 16) & 0x7) << 2) | ((e.roundId >>> 16) & 0x3);
+		writeU16BE(15, e.eventId & 0xFFFF);
+		writeU16BE(17, e.siteId  & 0xFFFF);
+		writeU16BE(19, e.roundId & 0xFFFF);
+
+		const varCounts = ((e.result & 0xF) << 12) | ((encodeAnnotationCount(e.nNags) & 0xF) << 8)
+		                | ((encodeAnnotationCount(e.nComments) & 0xF) << 4) | (encodeAnnotationCount(e.nVariations) & 0xF);
+		writeU16BE(21, varCounts);
+
+		writeU16BE(23, e.eco & 0xFFFF);
+
+		// Compact eventDate relative to date
+		const compact = encodeCompactEventDate4(e.eventDate, e.date);
+		writeU32BE(25, ((compact & 0xFFF) << 20) | (e.date & 0xFFFFF));
+
+		writeU16BE(29, ((e.whiteEloType & 0xF) << 12) | (e.whiteElo & 0xFFF));
+		writeU16BE(31, ((e.blackEloType & 0xF) << 12) | (e.blackElo & 0xFFF));
+
+		writeU32BE(33, ((e.storedLineCode & 0xFF) << 24) | (e.finalMatSig & 0xFFFFFF));
+
+		buf[37] = e.numHalfMoves & 0xFF;
+		buf[38] = (((e.numHalfMoves >>> 8) & 0x3) << 6) | (e.homePawnData[0] & 0x3F);
+
+		for (let i = 0; i < 8; i++) buf[39 + i] = e.homePawnData[i + 1] ?? 0;
+
+		return buf;
+	},
+
+	writeIndex(entries: IndexEntry[]): Buffer {
+		const header = Buffer.alloc(182, 0);
+		Buffer.from("Scid.si\x1a").copy(header, 0);
+		header.writeUInt16BE(400, 8);  // version
+		const n = entries.length;
+		header[14] = (n >> 16) & 0xFF;
+		header[15] = (n >> 8) & 0xFF;
+		header[16] = n & 0xFF;
+		return Buffer.concat([header, ...entries.map(e => this.encodeIndexEntry(e))]);
+	},
+
+	writeNamebase(names: string[][]): Buffer {
+		// SCID4 namebase: 36-byte header + front-coded entries per type
+		const counts   = [0, 1, 2, 3].map(t => (names[t] ?? []).length);
+		const maxFreqs = [1, 1, 1, 1]; // we track no frequencies; use 1
+
+		const header = Buffer.alloc(36, 0);
+		for (let t = 0; t < 4; t++) {
+			const off = 12 + t * 3;
+			header[off]     = (counts[t] >> 16) & 0xFF;
+			header[off + 1] = (counts[t] >> 8)  & 0xFF;
+			header[off + 2] = counts[t] & 0xFF;
+		}
+		for (let t = 0; t < 4; t++) {
+			const off = 24 + t * 3;
+			header[off + 2] = maxFreqs[t] & 0xFF; // maxFreq = 1, fits in 1 byte
+		}
+
+		const parts: Buffer[] = [header];
+		for (let type = 0; type < 4; type++) {
+			const typeNames = names[type] ?? [];
+			const count  = typeNames.length;
+			const idSize = count > 65535 ? 3 : 2;
+			let prevName = "";
+
+			for (let i = 0; i < count; i++) {
+				const name = typeNames[i];
+
+				// ID bytes
+				if (idSize === 3) {
+					parts.push(Buffer.from([(i >> 16) & 0xFF, (i >> 8) & 0xFF, i & 0xFF]));
+				} else {
+					parts.push(Buffer.from([(i >> 8) & 0xFF, i & 0xFF]));
+				}
+				parts.push(Buffer.from([1])); // frequency (1 byte, value 1)
+
+				// Prefix compression
+				let prefix = 0;
+				while (prefix < prevName.length && prefix < name.length && prevName[prefix] === name[prefix]) {
+					prefix++;
+				}
+				const suffix = name.substring(prefix);
+				parts.push(Buffer.from([name.length, prefix]));
+				parts.push(Buffer.from(suffix, "latin1"));
+
+				prevName = name;
+			}
+		}
+		return Buffer.concat(parts);
 	},
 };

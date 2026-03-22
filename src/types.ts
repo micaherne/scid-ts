@@ -127,6 +127,9 @@ export interface ScidCodec {
 	readIndex(buf: Buffer): IndexEntry[];
 	readNamebase(buf: Buffer): string[][];   // names[type][id]
 	gameFileExt(): string;                   // ".sg4" or ".sg5"
+	encodeIndexEntry(entry: IndexEntry): Buffer;
+	writeIndex(entries: IndexEntry[]): Buffer;
+	writeNamebase(names: string[][]): Buffer;
 }
 
 // Name type indices (match SCID5 varint encoding)
@@ -214,3 +217,61 @@ export const ENCODE_COMMENT = 12;
 export const ENCODE_START_MARKER = 13;
 export const ENCODE_END_MARKER = 14;
 export const ENCODE_END_GAME = 15;
+
+// ---------------------------------------------------------------------------
+// Write helpers
+// ---------------------------------------------------------------------------
+
+/** Encode a "YYYY.MM.DD" date string to the 20-bit SCID date value. */
+export function encodeDate(dateStr: string): number {
+	if (!dateStr) return 0;
+	const parts = dateStr.split(".");
+	const y = parseInt(parts[0] ?? "0") || 0;
+	const m = parseInt(parts[1] ?? "0") || 0;
+	const d = parseInt(parts[2] ?? "0") || 0;
+	return (y << 9) | (m << 5) | d;
+}
+
+/** Encode a result string to the 2-bit SCID result code. */
+export function encodeResult(result: string): number {
+	switch (result) {
+		case "1-0":       return RESULT_WHITE;
+		case "0-1":       return RESULT_BLACK;
+		case "1/2-1/2":   return RESULT_DRAW;
+		default:           return RESULT_NONE;
+	}
+}
+
+/** Encode an actual annotation count to the 4-bit coded value stored in the index. */
+export function encodeAnnotationCount(actual: number): number {
+	if (actual <= 10) return actual;
+	if (actual <= 15) return 11;
+	if (actual <= 20) return 12;
+	if (actual <= 30) return 13;
+	if (actual <= 40) return 14;
+	return 15;
+}
+
+/** Input type for addGame() / updateGame(). */
+export interface NewGame {
+	headers?: {
+		white?: string;
+		black?: string;
+		event?: string;
+		site?: string;
+		round?: string;
+		date?: string;          // "YYYY.MM.DD" or "????.??.??"
+		eventDate?: string;
+		result?: string;        // "1-0", "0-1", "1/2-1/2", "*"
+		whiteElo?: number;
+		blackElo?: number;
+		whiteEloType?: number;
+		blackEloType?: number;
+		flags?: number;
+		chess960?: boolean;
+	};
+	moves?: ScidAnnotatedMove[];
+	comment?: string;           // pre-game comment
+	extraTags?: [string, string][];
+	startFen?: string;
+}

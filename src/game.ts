@@ -1,6 +1,12 @@
 import { Board } from "./board.js";
 import { decodeMoveOrMarker, DecodeResult, DecodeMarker } from "./decode.js";
-import { ScidMove, ScidAnnotatedMove } from "./types.js";
+import { encodeMove } from "./encode.js";
+import {
+	ScidMove, ScidAnnotatedMove, PieceType,
+	QUEEN, ROOK, BISHOP, KNIGHT, KING,
+	algebraicToSquare, squareFile,
+	ENCODE_NAG, ENCODE_COMMENT, ENCODE_START_MARKER, ENCODE_END_MARKER, ENCODE_END_GAME,
+} from "./types.js";
 
 /**
  * Common tag name codes for SCID game files.
@@ -315,4 +321,161 @@ export function parseAnnotatedGameData(buf: Buffer, offset: number, length: numb
 	}
 
 	return { extraTags, moves: mainLine, startFen, comment: gameComment };
+}
+
+// ---------------------------------------------------------------------------
+// Encoding
+// ---------------------------------------------------------------------------
+
+export interface EncodedGameData {
+	buf: Buffer;
+	nComments: number;
+	nVariations: number;
+	nNags: number;
+	numHalfMoves: number;
+}
+
+interface EncodeCtx {
+	parts: Buffer[];
+	commentStrings: string[];
+	nComments: number;
+	nVariations: number;
+	nNags: number;
+	numHalfMoves: number;
+}
+
+function charToPromo(ch: string): PieceType {
+	switch (ch.toLowerCase()) {
+		case "r": return ROOK;
+		case "b": return BISHOP;
+		case "n": return KNIGHT;
+		default:  return QUEEN;
+	}
+}
+
+function isCastleMove(board: Board, fromSq: number, toSq: number): boolean {
+	const p = board.pieceAt(fromSq);
+	return p?.type === KING && Math.abs(squareFile(toSq) - squareFile(fromSq)) === 2;
+}
+
+function encodeMoveLine(moves: ScidAnnotatedMove[], board: Board, ctx: EncodeCtx, isVariation: boolean): void {
+	let isFirst = true;
+
+	for (const move of moves) {
+		const fromSq = algebraicToSquare(move.from);
+		const toSq   = algebraicToSquare(move.to);
+		const promo  = move.promotion ? charToPromo(move.promotion) : null;
+		const isCastle = isCastleMove(board, fromSq, toSq);
+		const isNull   = move.from === move.to;
+
+		// Save board state before this move for branching variations
+		const boardBeforeMove = board.clone();
+
+		// commentBefore: only for the first move of a variation, emitted before the move byte
+		if (isVariation && isFirst && move.commentBefore) {
+			ctx.parts.push(Buffer.from([ENCODE_COMMENT]));
+			ctx.commentStrings.push(move.commentBefore);
+			ctx.nComments++;
+		}
+		isFirst = false;
+
+		// Move byte(s)
+		const bytes = encodeMove(board, fromSq, toSq, promo, isCastle, isNull);
+		ctx.parts.push(Buffer.from(bytes));
+		if (!isVariation) ctx.numHalfMoves++;
+
+		// Apply move to advance board state
+		board.applyMove(fromSq, toSq, promo, isCastle, isNull);
+
+		// NAGs (after move byte)
+		if (move.nags) {
+			for (const nag of move.nags) {
+				ctx.parts.push(Buffer.from([ENCODE_NAG, nag]));
+				ctx.nNags++;
+			}
+		}
+
+		// commentAfter (after NAGs)
+		if (move.commentAfter) {
+			ctx.parts.push(Buffer.from([ENCODE_COMMENT]));
+			ctx.commentStrings.push(move.commentAfter);
+			ctx.nComments++;
+		}
+
+		// Variations (branch from position before this move)
+		if (move.variations) {
+			for (const variation of move.variations) {
+				ctx.nVariations++;
+				ctx.parts.push(Buffer.from([ENCODE_START_MARKER]));
+				encodeMoveLine(variation, boardBeforeMove.clone(), ctx, true);
+				ctx.parts.push(Buffer.from([ENCODE_END_MARKER]));
+			}
+		}
+	}
+}
+
+/**
+ * Encode a game (moves + annotations) into SCID game data bytes.
+ * The format is identical for .sg4 and .sg5.
+ */
+export function encodeAnnotatedGameData(
+	moves: ScidAnnotatedMove[],
+	options: { comment?: string; extraTags?: [string, string][]; startFen?: string } = {},
+): EncodedGameData {
+	const ctx: EncodeCtx = { parts: [], commentStrings: [], nComments: 0, nVariations: 0, nNags: 0, numHalfMoves: 0 };
+
+	// 1. Extra tags
+	for (const [name, value] of (options.extraTags ?? [])) {
+		const nameBytes  = Buffer.from(name, "latin1");
+		const valueBytes = Buffer.from(value, "latin1");
+		ctx.parts.push(Buffer.from([nameBytes.length]));
+		ctx.parts.push(nameBytes);
+		if (valueBytes.length > 240) {
+			const hi = Math.floor(valueBytes.length / 256) + 240;
+			ctx.parts.push(Buffer.from([hi, valueBytes.length % 256]));
+		} else {
+			ctx.parts.push(Buffer.from([valueBytes.length]));
+		}
+		ctx.parts.push(valueBytes);
+	}
+	ctx.parts.push(Buffer.from([0])); // end of extra tags
+
+	// 2. Start board flag
+	if (options.startFen) {
+		ctx.parts.push(Buffer.from([1]));
+		ctx.parts.push(Buffer.from(options.startFen + "\0", "latin1"));
+	} else {
+		ctx.parts.push(Buffer.from([0]));
+	}
+
+	// 3. Pre-game comment
+	if (options.comment) {
+		ctx.parts.push(Buffer.from([ENCODE_COMMENT]));
+		ctx.commentStrings.push(options.comment);
+		ctx.nComments++;
+	}
+
+	// 4. Move stream
+	const board = new Board();
+	if (options.startFen) {
+		board.setupFromFEN(options.startFen);
+	} else {
+		board.setupStartPosition();
+	}
+	encodeMoveLine(moves ?? [], board, ctx, false);
+
+	ctx.parts.push(Buffer.from([ENCODE_END_GAME]));
+
+	// 5. Comment strings (null-terminated, in stream order)
+	for (const str of ctx.commentStrings) {
+		ctx.parts.push(Buffer.from(str + "\0", "utf8"));
+	}
+
+	return {
+		buf: Buffer.concat(ctx.parts),
+		nComments: ctx.nComments,
+		nVariations: ctx.nVariations,
+		nNags: ctx.nNags,
+		numHalfMoves: ctx.numHalfMoves,
+	};
 }
