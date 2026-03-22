@@ -1,20 +1,35 @@
-import { IndexEntry, ScidCodec, NAME_PLAYER, NAME_EVENT, NAME_SITE, NAME_ROUND } from "./types.js";
+import { IndexEntry, ScidCodec, FLAG_DELETE } from "./types.js";
 
 const HEADER_SIZE = 182;
 const RECORD_SIZE = 47;
 
 /**
+ * Decode the compact 12-bit eventDate relative to the game date.
+ * compact bits: 11:9 = eyear_rel (0=unknown, else offset by -4 from game year),
+ *               8:5  = month, 4:0 = day.
+ * Returns absolute 20-bit date value, or 0 if unknown.
+ */
+function decodeCompactEventDate(compact: number, date: number): number {
+	if (!compact) return 0;
+	const eyearRel = (compact >> 9) & 0x7;
+	const month    = (compact >> 5) & 0xF;
+	const day      = compact & 0x1F;
+	const dyear    = date >> 9;
+	const eyear    = dyear + eyearRel - 4;
+	return (eyear << 9) | (month << 5) | day;
+}
+
+/**
  * SCID4 codec: reads .si4 index and .sn4 namebase files.
  * All multi-byte integers are big-endian.
+ * Layout derived from codec_scid4.cpp in the SCID source.
  */
 export const codec4: ScidCodec = {
 	readIndex(buf: Buffer): IndexEntry[] {
 		if (buf.length < HEADER_SIZE) return [];
 
-		// Header: 8 bytes magic, 2 bytes version, 3 bytes base type,
-		// 3 bytes numGames, 4 bytes autoLoad, 162 bytes description
-		const numGames =
-			(buf[13] << 16) | (buf[14] << 8) | buf[15];
+		// Header: 8 magic, 2 version, 4 baseType, 3 numGames, 3 autoLoad, 162 description
+		const numGames = (buf[14] << 16) | (buf[15] << 8) | buf[16];
 
 		const dataStart = HEADER_SIZE;
 		const available = Math.floor((buf.length - dataStart) / RECORD_SIZE);
@@ -27,58 +42,82 @@ export const codec4: ScidCodec = {
 			// Bytes 0-3: gameOffset (32-bit BE)
 			const gameOffset = buf.readUInt32BE(base);
 
-			// Bytes 4-6: gameLength(17) + customFlags(6) + spare(1)
-			const b4 = buf[base + 4];
-			const b5 = buf[base + 5];
+			// Bytes 4-5: gameLength low 16 bits (uint16 BE)
+			const gameLenLow = (buf[base + 4] << 8) | buf[base + 5];
+
+			// Byte 6: bit7 = gameLength bit16; bits5:0 = customFlags (flags bits 21:16)
 			const b6 = buf[base + 6];
-			const gameLength = (b4 << 9) | (b5 << 1) | (b6 >> 7);
+			const gameLength  = ((b6 & 0x80) ? 0x10000 : 0) | gameLenLow;
+			const customFlags = b6 & 0x3F;
 
-			// Bytes 7-8: flags (16 bits) — skip for now
-			// const flags = (buf[base + 7] << 8) | buf[base + 8];
+			// Bytes 7-8: flags16 (bits 15:0 of combined 22-bit flags, BE)
+			const flags16 = (buf[base + 7] << 8) | buf[base + 8];
+			const flags   = (customFlags << 16) | flags16;
 
-			// Bytes 9-13: name IDs
+			// Bytes 9-13: whiteId and blackId (20-bit each)
 			const b9 = buf[base + 9];
-			const whiteIdHigh = (b9 >> 4) & 0x0F;
-			const blackIdHigh = b9 & 0x0F;
-			const whiteIdLow = (buf[base + 10] << 8) | buf[base + 11];
-			const blackIdLow = (buf[base + 12] << 8) | buf[base + 13];
-			const whiteId = (whiteIdHigh << 16) | whiteIdLow;
-			const blackId = (blackIdHigh << 16) | blackIdLow;
+			const whiteId = (((b9 >> 4) & 0xF) << 16) | (buf[base + 10] << 8) | buf[base + 11];
+			const blackId = ((b9 & 0xF) << 16)         | (buf[base + 12] << 8) | buf[base + 13];
 
+			// Bytes 14-20: eventId(19-bit), siteId(19-bit), roundId(18-bit)
 			const b14 = buf[base + 14];
-			const eventIdHigh = (b14 >> 5) & 0x07;
-			const siteIdHigh = (b14 >> 2) & 0x07;
-			const roundIdHigh = b14 & 0x03;
-			const eventIdLow = (buf[base + 15] << 8) | buf[base + 16];
-			const siteIdLow = (buf[base + 17] << 8) | buf[base + 18];
-			const roundIdLow = (buf[base + 19] << 8) | buf[base + 20];
-			const eventId = (eventIdHigh << 16) | eventIdLow;
-			const siteId = (siteIdHigh << 16) | siteIdLow;
-			const roundId = (roundIdHigh << 16) | roundIdLow;
+			const eventId = (((b14 >> 5) & 0x7) << 16) | (buf[base + 15] << 8) | buf[base + 16];
+			const siteId  = (((b14 >> 2) & 0x7) << 16) | (buf[base + 17] << 8) | buf[base + 18];
+			const roundId = ((b14 & 0x3) << 16)         | (buf[base + 19] << 8) | buf[base + 20];
 
-			// Byte 22: nagCount(4) + result(4)
-			const b22 = buf[base + 22];
-			const result = b22 & 0x0F;
+			// Bytes 21-22: varCounts uint16 BE: bits15:12=result, 11:8=nNags, 7:4=nComments, 3:0=nVariations
+			const varCounts  = (buf[base + 21] << 8) | buf[base + 22];
+			const result     = (varCounts >> 12) & 0xF;
+			const nNags      = (varCounts >>  8) & 0xF;
+			const nComments  = (varCounts >>  4) & 0xF;
+			const nVariations = varCounts & 0xF;
 
-			// Bytes 23-24: ECO code (16 bits)
+			// Bytes 23-24: ECO code (16-bit BE)
 			const eco = (buf[base + 23] << 8) | buf[base + 24];
 
-			// Bytes 25-27: date (20 bits) + eventDate high (4 bits)
-			const b25 = buf[base + 25];
-			const b26 = buf[base + 26];
-			const b27 = buf[base + 27];
-			const date = (b25 << 12) | (b26 << 4) | (b27 >> 4);
+			// Bytes 25-28: uint32 BE — bits31:20 = compact eventDate (12 bits), bits19:0 = date (20 bits)
+			const dw = buf.readUInt32BE(base + 25);
+			const date    = dw & 0xFFFFF;
+			const compact = (dw >>> 20) & 0xFFF;
+			const eventDate = decodeCompactEventDate(compact, date);
 
-			// Bytes 29-30: whiteElo(12) + whiteEloType(4)
-			const whiteElo = (buf[base + 29] << 4) | (buf[base + 30] >> 4);
+			// Bytes 29-30: (whiteEloType << 12) | whiteElo  [uint16 BE]
+			const ew = (buf[base + 29] << 8) | buf[base + 30];
+			const whiteEloType = (ew >> 12) & 0xF;
+			const whiteElo     = ew & 0xFFF;
 
-			// Bytes 31-32: blackElo(12) + blackEloType(4)
-			const blackElo = (buf[base + 31] << 4) | (buf[base + 32] >> 4);
+			// Bytes 31-32: (blackEloType << 12) | blackElo  [uint16 BE]
+			const bw = (buf[base + 31] << 8) | buf[base + 32];
+			const blackEloType = (bw >> 12) & 0xF;
+			const blackElo     = bw & 0xFFF;
+
+			// Bytes 33-36: uint32 BE — bits31:24 = storedLineCode, bits23:0 = finalMatSig
+			const lw = buf.readUInt32BE(base + 33);
+			const storedLineCode = (lw >>> 24) & 0xFF;
+			const finalMatSig    = lw & 0xFFFFFF;
+
+			// Byte 37: numHalfMoves low 8 bits
+			// Byte 38: bits7:6 = numHalfMoves bits9:8; bits5:0 = homePawnCount
+			const numHalfMoves = ((buf[base + 38] >> 6) << 8) | buf[base + 37];
+			const homePawnCount = buf[base + 38] & 0x3F;
+
+			// Bytes 39-46: 8 homePawnData bytes; store as 9-byte array [count, ...data]
+			const homePawnData = new Uint8Array(9);
+			homePawnData[0] = homePawnCount;
+			for (let j = 0; j < 8; j++) homePawnData[j + 1] = buf[base + 39 + j];
 
 			entries[i] = {
 				whiteId, blackId, eventId, siteId, roundId,
-				whiteElo, blackElo, date, result, eco,
+				whiteElo, blackElo, whiteEloType, blackEloType,
+				date, eventDate,
+				result, eco,
+				flags,
+				deleted: (flags & FLAG_DELETE) !== 0,
+				nComments, nVariations, nNags,
+				numHalfMoves,
+				chess960: false,
 				gameOffset, gameLength,
+				storedLineCode, finalMatSig, homePawnData,
 			};
 		}
 

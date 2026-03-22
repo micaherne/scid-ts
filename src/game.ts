@@ -96,9 +96,9 @@ export function parseGameData(buf: Buffer, offset: number, length: number): Pars
 
 	const moves: ScidMove[] = [];
 	let depth = 0;
-	// Stack of board states saved before the last main-line or variation move
-	const boardStack: Board[] = [];
-	// Save the board state before each move for variation branching
+	// Stack of {board after move, board before move} for variation restoration
+	interface SimpleFrame { afterMove: Board; beforeMove: Board; }
+	const boardStack: SimpleFrame[] = [];
 	let preMoveBoard = board.clone();
 
 	while (pos < end) {
@@ -119,18 +119,18 @@ export function parseGameData(buf: Buffer, offset: number, length: number): Pars
 		} else {
 			switch (result.type) {
 				case "nag":
-					break;
 				case "comment":
 					break;
 				case "startVariation":
 					depth++;
-					// Variation branches from position before last move
-					boardStack.push(board);
+					boardStack.push({ afterMove: board, beforeMove: preMoveBoard });
 					board = preMoveBoard.clone();
 					break;
 				case "endVariation":
 					if (boardStack.length > 0) {
-						board = boardStack.pop()!;
+						const frame = boardStack.pop()!;
+						board = frame.afterMove;
+						preMoveBoard = frame.beforeMove;
 					}
 					depth--;
 					break;

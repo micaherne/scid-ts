@@ -205,6 +205,82 @@ describe("ScidDatabase getAnnotatedGame (SCID5 annotated fixture)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// SCID4 annotated game fixtures
+// Game: {Game comment} 1.f3?! {A bad move} e5  2.g4 ({Interesting try} 2.e4 {Better}) Qh4#
+// ---------------------------------------------------------------------------
+
+describe("ScidDatabase getAnnotatedGame (SCID4 annotated fixture)", () => {
+	it("returns main-line moves unchanged", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si4"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.moves.map(m => ({ from: m.from, to: m.to }))).toEqual(
+			FOOL_S_MATE_MOVES.map(m => ({ from: m.from, to: m.to }))
+		);
+		db.close();
+	});
+
+	it("attaches game-level pre-game comment", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si4"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.comment).toBe("Game comment");
+		db.close();
+	});
+
+	it("attaches NAG to the correct move", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si4"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.moves[0].nags).toEqual([6]);
+		expect(game.moves[1].nags).toBeUndefined();
+		db.close();
+	});
+
+	it("attaches commentAfter to the correct move", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si4"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.moves[0].commentAfter).toBe("A bad move");
+		expect(game.moves[1].commentAfter).toBeUndefined();
+		db.close();
+	});
+
+	it("returns the variation on the correct move", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si4"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.moves[2].variations).toHaveLength(1);
+		expect(game.moves[0].variations).toBeUndefined();
+		db.close();
+	});
+
+	it("decodes variation moves with commentBefore and commentAfter", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si4"));
+		const game = db.getAnnotatedGame(0);
+		const variation = game.moves[2].variations![0];
+		expect(variation[0].from).toBe("e2");
+		expect(variation[0].to).toBe("e4");
+		expect(variation[0].commentBefore).toBe("Interesting try");
+		expect(variation[0].commentAfter).toBe("Better");
+		db.close();
+	});
+
+	it("headers are correct", () => {
+		const db = new ScidDatabase();
+		db.open(path.join(FIXTURES_DIR, "annotated.si4"));
+		const game = db.getAnnotatedGame(0);
+		expect(game.headers.white).toBe("White");
+		expect(game.headers.result).toBe("0-1");
+		expect(game.headers.nComments).toBe(4);
+		expect(game.headers.nVariations).toBe(1);
+		expect(game.headers.nNags).toBe(1);
+		db.close();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Optional: run against a real external database if SCID_TEST_DB is set
 // ---------------------------------------------------------------------------
 

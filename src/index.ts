@@ -6,10 +6,18 @@ import {
 	ScidCodec, IndexEntry, ScidGameHeaders, ScidMove, ScidGame,
 	ScidAnnotatedMove, ScidAnnotatedGame,
 	NAME_PLAYER, NAME_EVENT, NAME_SITE, NAME_ROUND,
-	decodeDate, decodeEco, resultToString,
+	decodeDate, decodeEco, resultToString, decodeAnnotationCount,
 } from "./types.js";
 
 export type { ScidGameHeaders, ScidMove, ScidGame, ScidAnnotatedMove, ScidAnnotatedGame } from "./types.js";
+export {
+	FLAG_START, FLAG_PROMOTIONS, FLAG_UNDER_PROMO, FLAG_DELETE,
+	FLAG_WHITE_OP, FLAG_BLACK_OP, FLAG_MIDDLEGAME, FLAG_ENDGAME,
+	FLAG_NOVELTY, FLAG_PAWN, FLAG_TACTICS, FLAG_KSIDE, FLAG_QSIDE,
+	FLAG_BRILLIANCY, FLAG_BLUNDER, FLAG_USER,
+	FLAG_CUSTOM1, FLAG_CUSTOM2, FLAG_CUSTOM3, FLAG_CUSTOM4, FLAG_CUSTOM5, FLAG_CUSTOM6,
+	decodeAnnotationCount,
+} from "./types.js";
 
 export class ScidDatabase {
 	private codec: ScidCodec | null = null;
@@ -64,6 +72,10 @@ export class ScidDatabase {
 				white: "?", black: "?", event: "?", site: "?",
 				round: "?", date: "????.??.??", result: "*",
 				whiteElo: 0, blackElo: 0, eco: "",
+				deleted: false, flags: 0,
+				nComments: 0, nVariations: 0, nNags: 0,
+				numHalfMoves: 0, eventDate: "????.??.??",
+				chess960: false, whiteEloType: 0, blackEloType: 0,
 			};
 		}
 
@@ -78,6 +90,16 @@ export class ScidDatabase {
 			whiteElo: e.whiteElo,
 			blackElo: e.blackElo,
 			eco: decodeEco(e.eco),
+			deleted: e.deleted,
+			flags: e.flags,
+			nComments: decodeAnnotationCount(e.nComments),
+			nVariations: decodeAnnotationCount(e.nVariations),
+			nNags: decodeAnnotationCount(e.nNags),
+			numHalfMoves: e.numHalfMoves,
+			eventDate: decodeDate(e.eventDate),
+			chess960: e.chess960,
+			whiteEloType: e.whiteEloType,
+			blackEloType: e.blackEloType,
 		};
 	}
 

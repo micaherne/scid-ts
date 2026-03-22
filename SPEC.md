@@ -204,45 +204,57 @@ IDs are assigned sequentially per type (first player seen = ID 0, etc.).
 
 ### Header (182 bytes)
 
-- Bytes 0-7: magic "Scid.si\x1a" (8 bytes, last byte is 0x1a)
-- Bytes 8-9: version number (2 bytes, big-endian)
-- Bytes 10-12: base type (uint24, big-endian)
-- Bytes 13-15: number of games (uint24, big-endian)
-- Bytes 16-19: auto-load game number (uint32, big-endian)
-- Bytes 20-181: description string (162 bytes, null-padded)
+- Bytes 0-7:    magic "Scid.si\x1a" (8 bytes, last byte is 0x1a)
+- Bytes 8-9:    version number (uint16 BE)
+- Bytes 10-13:  base type (uint32 BE)
+- Bytes 14-16:  number of games (uint24 BE)
+- Bytes 17-19:  auto-load game number (uint24 BE)
+- Bytes 20-127: description string (108 bytes, null-padded)
+- Bytes 128-181: custom flag descriptions (6 × 9 bytes, null-padded)
 
 ### Record Layout (47 bytes, big-endian)
 
-| Offset | Size    | Content                                        |
-|--------|---------|------------------------------------------------|
-| 0-3    | 4 bytes | gameOffset (32-bit BE)                         |
-| 4-6    | 3 bytes | gameLength(17 bits) + customFlags(6) + spare(1)|
-| 7-8    | 2 bytes | flags (16 bits)                                |
-| 9      | 1 byte  | whiteID_high(4) + blackID_high(4)              |
-| 10-11  | 2 bytes | whiteID_low (16 bits)                          |
-| 12-13  | 2 bytes | blackID_low (16 bits)                          |
-| 14     | 1 byte  | eventID_high(3) + siteID_high(3) + roundID_high(2) |
-| 15-16  | 2 bytes | eventID_low (16 bits)                          |
-| 17-18  | 2 bytes | siteID_low (16 bits)                           |
-| 19-20  | 2 bytes | roundID_low (16 bits)                          |
-| 21     | 1 byte  | varCount(4) + commentCount(4)                  |
-| 22     | 1 byte  | nagCount(4) + result(4)                        |
-| 23-24  | 2 bytes | ECO code (16 bits)                             |
-| 25-27  | 3 bytes | date (20 bits) + eventDate_high(4)             |
-| 28     | 1 byte  | eventDate_low (8 bits — total 12 bits compact) |
-| 29-30  | 2 bytes | whiteElo(12) + whiteEloType(4)                 |
-| 31-32  | 2 bytes | blackElo(12) + blackEloType(4)                 |
-| 33-35  | 3 bytes | finalMatSig (24 bits)                          |
-| 36     | 1 byte  | storedLineCode (8 bits)                        |
-| 37-38  | 2 bytes | numHalfMoves (10 bits) + padding (6 bits)      |
-| 39-46  | 8 bytes | homePawnData (1 count + 7 data bytes)           |
+| Offset | Size    | Content                                              |
+|--------|---------|------------------------------------------------------|
+| 0-3    | 4 bytes | gameOffset (uint32 BE)                               |
+| 4-5    | 2 bytes | gameLength low 16 bits (uint16 BE)                   |
+| 6      | 1 byte  | bit7 = gameLength bit16; bits5:0 = customFlags       |
+| 7-8    | 2 bytes | flags16 — bits 15:0 of combined 22-bit flags (BE)    |
+| 9      | 1 byte  | whiteID bits19:16 (high nibble) + blackID bits19:16 (low nibble) |
+| 10-11  | 2 bytes | whiteID bits15:0                                     |
+| 12-13  | 2 bytes | blackID bits15:0                                     |
+| 14     | 1 byte  | eventID bits18:16 (bits7:5) + siteID bits18:16 (bits4:2) + roundID bits17:16 (bits1:0) |
+| 15-16  | 2 bytes | eventID bits15:0                                     |
+| 17-18  | 2 bytes | siteID bits15:0                                      |
+| 19-20  | 2 bytes | roundID bits15:0                                     |
+| 21-22  | 2 bytes | varCounts uint16 BE: bits15:12=result, bits11:8=nNags, bits7:4=nComments, bits3:0=nVariations |
+| 23-24  | 2 bytes | ECO code (uint16 BE)                                 |
+| 25-28  | 4 bytes | uint32 BE: bits31:20 = compact eventDate (12 bits), bits19:0 = date (20 bits) |
+| 29-30  | 2 bytes | (whiteEloType << 12) \| whiteElo (uint16 BE)          |
+| 31-32  | 2 bytes | (blackEloType << 12) \| blackElo (uint16 BE)          |
+| 33-36  | 4 bytes | uint32 BE: bits31:24 = storedLineCode, bits23:0 = finalMatSig |
+| 37     | 1 byte  | numHalfMoves low 8 bits                              |
+| 38     | 1 byte  | bits7:6 = numHalfMoves bits9:8; bits5:0 = homePawnCount |
+| 39-46  | 8 bytes | homePawnData (8 data bytes; count is in byte 38 bits5:0) |
 
 Name ID reconstruction:
-- whiteID = (whiteID_high << 16) | whiteID_low → 20 bits
-- blackID = (blackID_high << 16) | blackID_low → 20 bits
-- eventID = (eventID_high << 16) | eventID_low → 19 bits
-- siteID = (siteID_high << 16) | siteID_low → 19 bits
-- roundID = (roundID_high << 16) | roundID_low → 18 bits
+- whiteID = (whiteID bits19:16 << 16) | whiteID bits15:0 → 20 bits
+- blackID = (blackID bits19:16 << 16) | blackID bits15:0 → 20 bits
+- eventID = (eventID bits18:16 << 16) | eventID bits15:0 → 19 bits
+- siteID  = (siteID bits18:16  << 16) | siteID bits15:0  → 19 bits
+- roundID = (roundID bits17:16 << 16) | roundID bits15:0 → 18 bits
+
+Combined flags: customFlags (bits5:0 of byte 6) occupy flags bits21:16; flags16 (bytes 7-8) occupies flags bits15:0.
+
+gameLength reconstruction: ((byte6 bit7) << 16) | bytes4-5 → 17-bit value.
+
+### Compact eventDate encoding (12 bits)
+
+Bits 11:9 = eyear_rel (relative year offset + 4, so 0=unknown, 1=gameYear-3 ... 4=same year ... 7=gameYear+3).
+Bits 8:5  = month (0=unknown, 1-12).
+Bits 4:0  = day (0=unknown, 1-31).
+
+To decode: eyear = gameYear + eyear_rel - 4. Value of 0 → unknown eventDate.
 
 ---
 

@@ -238,21 +238,47 @@ export class Board {
 			movingPiece.type = promo;
 		}
 
-		// Handle castling — move the rook
+		// Handle castling — move the rook.
+		// Scan from the corner inward to find the rook, supporting both
+		// standard chess and Chess960 (where the rook may not be on a/h file).
 		if (isCastle) {
-			let rookFrom: number, rookTo: number;
+			const rankBase = squareRank(from) * 8;
+			const fromFile = squareFile(from);
+			const color = movingPiece.color;
+			let rookFrom = -1;
+			let rookTo: number;
+
 			if (to > from) {
-				rookFrom = (squareRank(from) * 8) + 7;
-				rookTo = (squareRank(from) * 8) + 5;
+				// Kingside: rook is somewhere to the right of king's origin, moves to f-file
+				for (let f = 7; f > fromFile; f--) {
+					const sq = rankBase + f;
+					const idx = this.board[sq];
+					if (idx >= 0 && this.pieces[idx].type === ROOK && this.pieces[idx].color === color) {
+						rookFrom = sq;
+						break;
+					}
+				}
+				rookTo = rankBase + 5; // f-file
 			} else {
-				rookFrom = squareRank(from) * 8;
-				rookTo = (squareRank(from) * 8) + 3;
+				// Queenside: rook is somewhere to the left of king's origin, moves to d-file
+				for (let f = 0; f < fromFile; f++) {
+					const sq = rankBase + f;
+					const idx = this.board[sq];
+					if (idx >= 0 && this.pieces[idx].type === ROOK && this.pieces[idx].color === color) {
+						rookFrom = sq;
+						break;
+					}
+				}
+				rookTo = rankBase + 3; // d-file
 			}
-			const rookIdx = this.board[rookFrom];
-			if (rookIdx >= 0) {
-				this.board[rookFrom] = -1;
-				this.board[rookTo] = rookIdx;
-				this.pieces[rookIdx].square = rookTo;
+
+			if (rookFrom >= 0) {
+				const rookIdx = this.board[rookFrom];
+				if (rookIdx >= 0) {
+					this.board[rookFrom] = -1;
+					this.board[rookTo] = rookIdx;
+					this.pieces[rookIdx].square = rookTo;
+				}
 			}
 		}
 

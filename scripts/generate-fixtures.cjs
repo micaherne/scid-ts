@@ -215,44 +215,85 @@ function makeSn4() {
 	]);
 }
 
-function makeSi4(gameData) {
-	// Header: 182 bytes
-	//   [13-15]: numGames = 1
-	const header = Buffer.alloc(182);
-	header[15] = 1; // numGames = 1
+/**
+ * Build a SCID4 index buffer: 182-byte header + one 47-byte record.
+ *
+ * @param {Buffer} gameData - game bytes (used for gameLength)
+ * @param {object} opts
+ * @param {number}  opts.gameOffset  - byte offset of game in .sg4 file
+ * @param {number}  opts.blackId     - black player name ID
+ * @param {number}  opts.result      - result (0=none,1=white,2=black,3=draw)
+ * @param {number}  opts.nNags       - raw 4-bit coded NAG count
+ * @param {number}  opts.nComments   - raw 4-bit coded comment count
+ * @param {number}  opts.nVariations - raw 4-bit coded variation count
+ * @param {number}  opts.numHalfMoves
+ */
+function makeSi4Record(gameData, opts) {
+	const {
+		gameOffset = 0,
+		blackId = 1,
+		result = 2,
+		nNags = 0,
+		nComments = 0,
+		nVariations = 0,
+		numHalfMoves = 4,
+	} = opts || {};
 
-	// Record: 47 bytes (big-endian)
 	const record = Buffer.alloc(47);
 
-	// Bytes 0-3: gameOffset = 0
-	record.writeUInt32BE(0, 0);
+	// Bytes 0-3: gameOffset
+	record.writeUInt32BE(gameOffset >>> 0, 0);
 
-	// Bytes 4-6: gameLength(17 bits) packed as (b4<<9)|(b5<<1)|(b6>>7)
+	// Bytes 4-5: gameLength low 16 bits; byte 6 bit7 = gameLength bit16
 	const gl = gameData.length;
-	record[4] = (gl >> 9) & 0xff;
-	record[5] = (gl >> 1) & 0xff;
-	record[6] = (gl & 1) << 7;
+	record[4] = (gl >> 8) & 0xff;
+	record[5] = gl & 0xff;
+	record[6] = (gl >= 0x10000) ? 0x80 : 0x00;
 
-	// Bytes 12-13: blackIdLow = 1 (black player ID)
-	record[12] = 0;
-	record[13] = 1;
+	// Byte 9 high nibble = whiteId bits19:16 (0), low nibble = blackId bits19:16 (0)
+	// Bytes 10-11: whiteId low 16 = 0; bytes 12-13: blackId low 16
+	record[12] = (blackId >> 8) & 0xff;
+	record[13] = blackId & 0xff;
 
-	// Byte 22: result in lower nibble. RESULT_BLACK = 2.
-	record[22] = 2;
+	// Bytes 21-22: varCounts uint16 BE
+	// bits15:12=result, bits11:8=nNags, bits7:4=nComments, bits3:0=nVariations
+	const varCounts = ((result & 0xf) << 12) | ((nNags & 0xf) << 8) | ((nComments & 0xf) << 4) | (nVariations & 0xf);
+	record[21] = (varCounts >> 8) & 0xff;
+	record[22] = varCounts & 0xff;
 
-	// Bytes 25-27: date(20 bits) packed as (b25<<12)|(b26<<4)|(b27>>4)
-	record[25] = (DATE >> 12) & 0xff;
-	record[26] = (DATE >> 4) & 0xff;
-	record[27] = (DATE & 0xf) << 4;
+	// Bytes 25-28: uint32 BE: bits31:20=compactEventDate(0), bits19:0=date
+	record.writeUInt32BE(DATE & 0xfffff, 25);
 
-	return Buffer.concat([header, record]);
+	// Byte 37: numHalfMoves low 8; byte 38: bits7:6=numHalfMoves bits9:8, bits5:0=homePawnCount(0)
+	record[37] = numHalfMoves & 0xff;
+	record[38] = ((numHalfMoves >> 8) & 0x3) << 6;
+
+	return record;
 }
 
-fs.writeFileSync(path.join(FIXTURES_DIR, "test.si4"), makeSi4(GAME_DATA));
-fs.writeFileSync(path.join(FIXTURES_DIR, "test.sn4"), makeSn4());
+function makeSi4(gameData, opts) {
+	const header = Buffer.alloc(182);
+	header[16] = 1; // numGames = 1
+	return Buffer.concat([header, makeSi4Record(gameData, opts)]);
+}
+
+const sn4 = makeSn4();
+
+fs.writeFileSync(path.join(FIXTURES_DIR, "test.si4"), makeSi4(GAME_DATA, { result: 2, numHalfMoves: 4 }));
+fs.writeFileSync(path.join(FIXTURES_DIR, "test.sn4"), sn4);
 fs.writeFileSync(path.join(FIXTURES_DIR, "test.sg4"), GAME_DATA);
+
+// annotated.si4/sn4/sg4 — same game data as annotated.si5 (game format is identical)
+// nComments=4 (game comment + after f3 + before e4 variation + after e4)
+// nVariations=1, nNags=1
+fs.writeFileSync(path.join(FIXTURES_DIR, "annotated.si4"), makeSi4(ANNOTATED_GAME_DATA, {
+	result: 2, numHalfMoves: 4, nComments: 4, nVariations: 1, nNags: 1,
+}));
+fs.writeFileSync(path.join(FIXTURES_DIR, "annotated.sn4"), sn4);
+fs.writeFileSync(path.join(FIXTURES_DIR, "annotated.sg4"), ANNOTATED_GAME_DATA);
 
 console.log("Fixtures written to", FIXTURES_DIR);
 console.log("  test.si4/sn4/sg4         — SCID4, Fool's Mate, no annotations");
+console.log("  annotated.si4/sn4/sg4    — SCID4, Fool's Mate with comment and variation");
 console.log("  test.si5/sn5/sg5         — SCID5, Fool's Mate, no annotations");
 console.log("  annotated.si5/sn5/sg5    — SCID5, Fool's Mate with comment and variation");
